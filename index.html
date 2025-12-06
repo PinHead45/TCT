@@ -35,7 +35,8 @@
         }
     </style>
 </head>
-<body class="bg-gray-900 text-white h-screen overflow-hidden">
+<!-- UPDATED: Changed h-screen to min-h-screen and overflow-hidden to overflow-y-auto to allow scrolling -->
+<body class="bg-gray-900 text-white min-h-screen overflow-y-auto">
 
     <div id="root"></div>
     
@@ -43,8 +44,8 @@
         const { useState, useEffect, useCallback, useRef, useReducer } = React;
         
         // --- CONFIGURATION ---
-        // Bumped to 1.3 to force the Service Worker update check
-        const CURRENT_APP_VERSION = '1.3'; 
+        // UPDATED: Bumped version to 1.4 to force the Service Worker update check
+        const CURRENT_APP_VERSION = '1.4'; 
         const LOCAL_STORAGE_VERSION_KEY = 'appVersion';
         const SERVICE_WORKER_UPDATE_KEY = 'swUpdatePending';
 
@@ -443,7 +444,14 @@
         (function() {
             // Self-registering Service Worker (minimal code to handle caching)
             const SW_FILENAME = 'sw.js'; // We pretend we are using this file for registration
-            const CACHE_NAME = 'tactical-tracker-v1.3'; // Cache key matches version
+            // UPDATED: Cache key bumped to 1.4
+            const CACHE_NAME = 'tactical-tracker-v1.4'; 
+
+            const urlsToCache = [
+                    '/', 
+                    // Since all logic is in index.html, we only cache the root document.
+                    // This is sufficient for a single-file PWA.
+                ];
 
             // We must inject the Service Worker code inline since we are restricted to a single file.
             const swContent = `
@@ -511,12 +519,6 @@
                                     console.log('SW: Update downloaded and ready. Signaling React App.');
                                     // Set a flag in Local Storage for the React component to see and display the banner.
                                     localStorage.setItem('swUpdatePending', 'true');
-                                    
-                                    // Optionally, force the new worker to take over immediately (less safe, but forces the update)
-                                    // newWorker.postMessage({ action: 'skipWaiting' }); 
-                                    
-                                    // Since we can't post a message back to the React component easily, 
-                                    // we rely on the React App detecting the 'swUpdatePending' flag on the next render.
                                 }
                             });
                         });
