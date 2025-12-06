@@ -43,8 +43,8 @@
         const { useState, useEffect, useCallback, useRef, useReducer } = React;
         
         // --- CONFIGURATION ---
-        // UPDATED: Bumped version to 1.8 to force the Service Worker update check
-        const CURRENT_APP_VERSION = '1.8'; 
+        // UPDATED: Bumped version to 1.9 for the aggressive update test
+        const CURRENT_APP_VERSION = '1.9'; 
         const LOCAL_STORAGE_VERSION_KEY = 'appVersion';
         const SERVICE_WORKER_UPDATE_KEY = 'swUpdatePending';
 
@@ -463,8 +463,8 @@
         (function() {
             // Self-registering Service Worker (minimal code to handle caching)
             const SW_FILENAME = 'sw.js'; 
-            // UPDATED: Cache key bumped to 1.8
-            const CACHE_NAME = 'tactical-tracker-v1.8'; 
+            // UPDATED: Cache key bumped to 1.9
+            const CACHE_NAME = 'tactical-tracker-v1.9'; 
 
             const urlsToCache = [
                     '/', 
