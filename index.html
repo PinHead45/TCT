@@ -35,7 +35,6 @@
         }
     </style>
 </head>
-<!-- UPDATED: Changed h-screen to min-h-screen and overflow-hidden to overflow-y-auto to allow scrolling -->
 <body class="bg-gray-900 text-white min-h-screen overflow-y-auto">
 
     <div id="root"></div>
@@ -44,8 +43,8 @@
         const { useState, useEffect, useCallback, useRef, useReducer } = React;
         
         // --- CONFIGURATION ---
-        // UPDATED: Bumped version to 1.5 to force the Service Worker update check
-        const CURRENT_APP_VERSION = '1.5'; 
+        // UPDATED: Bumped version to 1.6 to force the Service Worker update check
+        const CURRENT_APP_VERSION = '1.6'; 
         const LOCAL_STORAGE_VERSION_KEY = 'appVersion';
         const SERVICE_WORKER_UPDATE_KEY = 'swUpdatePending';
 
@@ -243,23 +242,43 @@
                 setSynth(new Tone.Synth().toDestination());
             }, []);
             
-            // --- Version / Update Checker ---
+            // --- Version / Update Checker & Messaging Listener ---
             useEffect(() => {
                 const installedVersion = localStorage.getItem(LOCAL_STORAGE_VERSION_KEY);
                 
-                // 1. Check for Code Version mismatch (This still works as a fallback)
+                // 1. Initial Check for Code Version mismatch (Fallback)
                 if (installedVersion !== CURRENT_APP_VERSION) {
                     setIsUpdateAvailable(true);
                     // Update the locally stored version to prevent the banner showing immediately after reload.
                     localStorage.setItem(LOCAL_STORAGE_VERSION_KEY, CURRENT_APP_VERSION);
                 }
 
-                // 2. Check for Service Worker Pending Update (More reliable for PWA updates)
+                // 2. Initial Check for Service Worker Pending Update (From previous session)
                 if (localStorage.getItem(SERVICE_WORKER_UPDATE_KEY) === 'true') {
                     setIsUpdateReady(true);
                 }
 
-            }, []);
+                // 3. LISTEN FOR LIVE SERVICE WORKER MESSAGES (The aggressive fix!)
+                if ('serviceWorker' in navigator) {
+                    const messageListener = (event) => {
+                        // Check for the custom message from the newly installed SW
+                        if (event.data && event.data.type === 'UPDATE_READY') {
+                            console.log("App received UPDATE_READY message from SW. Showing banner now.");
+                            // Set the flag in storage (for persistence on next load) and state (for immediate display)
+                            localStorage.setItem(SERVICE_WORKER_UPDATE_KEY, 'true');
+                            setIsUpdateReady(true);
+                        }
+                    };
+                    
+                    navigator.serviceWorker.addEventListener('message', messageListener);
+                    
+                    return () => {
+                        // Cleanup the listener when the component unmounts
+                        navigator.serviceWorker.removeEventListener('message', messageListener);
+                    };
+                }
+
+            }, []); // Empty dependency array means this runs once on mount
 
             const handleUpdateReload = () => {
                 // Clear the flag and force a hard reload, bypassing the cache
@@ -443,14 +462,12 @@
     <script>
         (function() {
             // Self-registering Service Worker (minimal code to handle caching)
-            const SW_FILENAME = 'sw.js'; // We pretend we are using this file for registration
-            // UPDATED: Cache key bumped to 1.5
-            const CACHE_NAME = 'tactical-tracker-v1.5'; 
+            const SW_FILENAME = 'sw.js'; 
+            // UPDATED: Cache key bumped to 1.6
+            const CACHE_NAME = 'tactical-tracker-v1.6'; 
 
             const urlsToCache = [
                     '/', 
-                    // Since all logic is in index.html, we only cache the root document.
-                    // This is sufficient for a single-file PWA.
                 ];
 
             // We must inject the Service Worker code inline since we are restricted to a single file.
@@ -458,8 +475,6 @@
                 const CACHE_NAME = '${CACHE_NAME}';
                 const urlsToCache = [
                     '/', 
-                    // Since all logic is in index.html, we only cache the root document.
-                    // This is sufficient for a single-file PWA.
                 ];
 
                 self.addEventListener('install', event => {
@@ -497,38 +512,58 @@
                     );
                 });
             `;
-
-            if ('serviceWorker' in navigator) {
-                // We create a Blob URL for the Service Worker content so we can register it.
-                const swBlob = new Blob([swContent], { type: 'application/javascript' });
-                const swUrl = URL.createObjectURL(swBlob);
-                
-                navigator.serviceWorker.register(swUrl, { scope: '/' })
-                    .then(reg => {
+            
+            // Listener for the new worker's state change to 'installed'
+            const registerAndListen = async () => {
+                if ('serviceWorker' in navigator) {
+                    const swBlob = new Blob([swContent], { type: 'application/javascript' });
+                    const swUrl = URL.createObjectURL(swBlob);
+                    
+                    try {
+                        const reg = await navigator.serviceWorker.register(swUrl, { scope: '/' });
                         console.log('SW registration successful with scope:', reg.scope);
                         
-                        // Check for update right after registration (sometimes helps force it)
-                        reg.update();
+                        reg.update(); // Request update immediately
 
-                        // Listener for when a new Service Worker is found and waiting
-                        reg.addEventListener('updatefound', () => {
-                            const newWorker = reg.installing;
-                            newWorker.addEventListener('statechange', () => {
-                                // UPDATED LOGIC: Trigger the flag as soon as the new worker is installed and waiting
-                                if (newWorker.state === 'installed') {
-                                    console.log('SW: Update downloaded and ready. Signaling React App.');
-                                    // Set a flag in Local Storage for the React component to see and display the banner.
-                                    localStorage.setItem('swUpdatePending', 'true');
-                                }
+                        // Check if a new worker is currently installing or waiting
+                        if (reg.installing || reg.waiting) {
+                            console.log("SW: New worker already in progress.");
+                            handleNewWorker(reg.installing || reg.waiting);
+                        } else {
+                            // Listen for the next update
+                            reg.addEventListener('updatefound', () => {
+                                console.log("SW: Update found listener triggered.");
+                                handleNewWorker(reg.installing);
                             });
-                        });
-                    })
-                    .catch(error => {
+                        }
+                    } catch (error) {
                         console.error('SW registration failed:', error);
-                    });
-            } else {
-                console.log('Service Worker not supported in this browser.');
-            }
+                    }
+                } else {
+                    console.log('Service Worker not supported in this browser.');
+                }
+            };
+            
+            const handleNewWorker = (newWorker) => {
+                if (!newWorker) return;
+                
+                // This listener ensures we only act when the new worker is fully ready (installed/waiting)
+                newWorker.addEventListener('statechange', () => {
+                    if (newWorker.state === 'installed') {
+                        console.log('SW: Update downloaded and ready (state: installed). Sending message to clients.');
+                        
+                        // ** CRITICAL FIX: Use postMessage to tell the controlling client (the open app) to update its UI **
+                        navigator.serviceWorker.ready.then(reg => {
+                            if (reg.waiting) {
+                                // The new worker is waiting, send the message.
+                                reg.waiting.postMessage({ type: 'UPDATE_READY' });
+                            }
+                        });
+                    }
+                });
+            };
+
+            registerAndListen();
         })();
     </script>
 
