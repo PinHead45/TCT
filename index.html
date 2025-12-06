@@ -24,7 +24,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
 
     <!-- PWA Manifest -->
-    <link rel="manifest" href="data:application/manifest+json;base64,ewogICJuYW1lIjogIlRhY3RpY2FsIENvb2xkb3ducyIsCiAgInNob3J0X25hbWUiOiAiQ2hvcHBlclRpbWVyIiwKICAic3RhcnRfdXJsIjogIi4iLAogICJkaXNwbGF5IjogInN0YW5kYWxvbmUiLAogICJiYWNrZ3JvdW5kX2NvbG9yIjogIiMxMTE4MjciLAogICJ0aGVtZV9jb2xvciI6IiMxMTE4MjciLAogICJpY29ucyI6IFsgeyAic3JjIjogImh0dHBzOi8vcGxhY2Vob2xkLmNvLzE5MngxOTIvMGQxMTE3L2U1M2UzZS9wbmc/dGV4dD1UQ1QiLCAic2l6ZXMiOiAiMTkyeDE5MiIsICJ0eXBlIjogImltYWdlL3BuZyIgfSBdCn0=" />
+    <link rel="manifest" href="data:application/manifest+json;base64,ewogICJuYW1lIjogIlRhY3RpY2FsIENvb2xkb3ducyIsCiAgInNob3J0X25hbWUiOiAiQ2hvcHBlclRpbWVyIiwKICAic3RhcnRfdXJsIjogIi4iLAogICJkaXNwbGF5IjogInN0YW5kb2xvbmUiLAogICJiYWNrZ3JvdW5kX2NvbG9yIjogIiMxMTE4MjciLAogICJ0aGVtZV9jb2xvciI6IiMxMTE4MjciLAogICJpY29ucyI6IFsgeyAic3JjIjogImh0dHBzOi8vcGxhY2Vob2xkLmNvLzE5MngxOTIvMGQxMTE3L2U1M2UzZS9wbmc/dGV4dD1UQ1QiLCAic2l6ZXMiOiAiMTkyeDE5MiIsICJ0eXBlIjogImltYWdlL3BuZyIgfSBdCn0=" />
 
     <style>
         /* Prevent pull-to-refresh on mobile to feel more like an app */
@@ -43,8 +43,8 @@
         const { useState, useEffect, useCallback, useRef, useReducer } = React;
         
         // --- CONFIGURATION ---
-        // UPDATED: Bumped version to 1.9 for the aggressive update test
-        const CURRENT_APP_VERSION = '1.9'; 
+        // UPDATED: Bumped version to 2.0 for the aggressive Service Worker activation test
+        const CURRENT_APP_VERSION = '2.0'; 
         const LOCAL_STORAGE_VERSION_KEY = 'appVersion';
         const SERVICE_WORKER_UPDATE_KEY = 'swUpdatePending';
 
@@ -231,9 +231,6 @@
             // PWA Update State: Check if the *Service Worker* has signalled an update is ready.
             const [isUpdateReady, setIsUpdateReady] = useState(false);
             
-            // Version Check State: Check if the app version in code is newer than the last run version.
-            const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
-
             // Refs to control child timers
             const friendlyTimerRef = useRef(null);
             const hostileTimerRef = useRef(null);
@@ -244,21 +241,15 @@
             
             // --- Version / Update Checker & Messaging Listener ---
             useEffect(() => {
-                const installedVersion = localStorage.getItem(LOCAL_STORAGE_VERSION_KEY);
-                
-                // 1. Initial Check for Code Version mismatch (Fallback)
-                if (installedVersion !== CURRENT_APP_VERSION) {
-                    setIsUpdateAvailable(true);
-                    // Update the locally stored version to prevent the banner showing immediately after reload.
-                    localStorage.setItem(LOCAL_STORAGE_VERSION_KEY, CURRENT_APP_VERSION);
-                }
+                // 1. Initial Check: Update the stored version every time to avoid the update banner showing on fresh load.
+                localStorage.setItem(LOCAL_STORAGE_VERSION_KEY, CURRENT_APP_VERSION);
 
                 // 2. Initial Check for Service Worker Pending Update (From previous session)
                 if (localStorage.getItem(SERVICE_WORKER_UPDATE_KEY) === 'true') {
                     setIsUpdateReady(true);
                 }
 
-                // 3. LISTEN FOR LIVE SERVICE WORKER MESSAGES (The aggressive fix!)
+                // 3. LISTEN FOR LIVE SERVICE WORKER MESSAGES
                 if ('serviceWorker' in navigator) {
                     const messageListener = (event) => {
                         // Check for the custom message from the newly installed SW
@@ -366,7 +357,6 @@
                 releaseWakeLock();
             };
 
-            const showUpdateBanner = isUpdateAvailable || isUpdateReady;
 
             return (
                 <div className="min-h-screen bg-gray-900 bg-[url('https://placehold.co/1920x1080/0d1117/2d3748/png?text=TACTICAL+OVERLAY')] bg-cover bg-center p-4 flex flex-col items-center overflow-y-auto">
@@ -375,15 +365,12 @@
                         TACTICAL COOLDOWN TRACKER
                     </h1>
                     
-                    {/* UPDATE BANNER (Triggered by either version mismatch OR Service Worker waiting) */}
-                    {showUpdateBanner && (
+                    {/* UPDATE BANNER (Triggered only by Service Worker waiting) */}
+                    {isUpdateReady && (
                         <div className="w-full max-w-5xl bg-yellow-900/40 border-2 border-yellow-500 p-3 mb-6 rounded-lg text-sm text-yellow-300 font-mono text-center animate-pulse">
                             <p className="font-bold mb-2">CRITICAL UPDATE DETECTED!</p>
                             <p className="mb-3">
-                                {isUpdateReady 
-                                    ? "A critical update has been downloaded and is ready to install."
-                                    : `A new version (${CURRENT_APP_VERSION}) is available. Please update now to ensure maximum stability.`
-                                }
+                                Version {CURRENT_APP_VERSION} has been downloaded and is ready to install.
                             </p>
                             <button 
                                 onClick={handleUpdateReload}
@@ -441,7 +428,7 @@
                         </p>
                     </div>
 
-                    {/* Advice Message (Conditional Red Box) - Now ABOVE App Version */}
+                    {/* Advice Message (Conditional Red Box) */}
                     {!lockStatus && ('wakeLock' in navigator) && (
                         <div className="w-full max-w-sm bg-red-900/30 border border-red-700/50 p-3 rounded-lg text-xs text-red-300 font-mono text-center mb-4">
                             If the lock remains INACTIVE, your device/browser may require explicit permission in settings, or the PWA privileges are insufficient.
@@ -463,14 +450,13 @@
         (function() {
             // Self-registering Service Worker (minimal code to handle caching)
             const SW_FILENAME = 'sw.js'; 
-            // UPDATED: Cache key bumped to 1.9
-            const CACHE_NAME = 'tactical-tracker-v1.9'; 
-
+            // UPDATED: Cache key bumped to 2.0
+            const CACHE_NAME = 'tactical-tracker-v2.0'; 
             const urlsToCache = [
                     '/', 
                 ];
 
-            // We must inject the Service Worker code inline since we are restricted to a single file.
+            // --- Service Worker Content (New logic for SKIP_WAITING) ---
             const swContent = `
                 const CACHE_NAME = '${CACHE_NAME}';
                 const urlsToCache = [
@@ -479,6 +465,7 @@
 
                 self.addEventListener('install', event => {
                     console.log('SW: Installing and caching assets...');
+                    // Aggressively skip waiting during install
                     self.skipWaiting();
                     event.waitUntil(
                         caches.open(CACHE_NAME)
@@ -487,7 +474,7 @@
                 });
 
                 self.addEventListener('activate', event => {
-                    console.log('SW: Activating. Clearing old caches.');
+                    console.log('SW: Activating. Clearing old caches and claiming clients.');
                     event.waitUntil(
                         caches.keys().then(cacheNames => {
                             return Promise.all(
@@ -496,6 +483,14 @@
                             );
                         }).then(() => self.clients.claim())
                     );
+                });
+                
+                // NEW: Listen for messages from the client to immediately activate (SKIP_WAITING)
+                self.addEventListener('message', event => {
+                    if (event.data && event.data.type === 'SKIP_WAITING') {
+                        console.log('SW: Received SKIP_WAITING command. Forcing activation.');
+                        self.skipWaiting();
+                    }
                 });
 
                 self.addEventListener('fetch', event => {
@@ -527,26 +522,26 @@
                     const reg = await navigator.serviceWorker.register(swUrl, { scope: '/' });
                     console.log('SW registration successful with scope:', reg.scope);
                     
-                    // CRITICAL: Aggressive update polling interval
+                    // CRITICAL: Aggressive update polling interval (5s)
                     const pollInterval = setInterval(() => {
-                        // Only poll if the update process hasn't already started or completed
+                        // Forcing the browser to check for the new service worker file
                         if (!reg.waiting && !reg.installing) {
                              console.log("SW Poll: Forcing update check via reg.update()");
                              reg.update();
                         } else if (reg.waiting || reg.installing) {
-                            // If an update is in progress, stop polling and let the listener take over
+                            // If an update is in progress, stop polling. The listener handles the rest.
                             clearInterval(pollInterval);
                         }
-                    }, 5000); // Check every 5 seconds
+                    }, 5000); 
 
                     // Check if a new worker is currently installing or waiting
                     if (reg.installing || reg.waiting) {
-                        console.log("SW: New worker already in progress.");
+                        console.log("SW: New worker already in progress. Attaching listener.");
                         handleNewWorker(reg.installing || reg.waiting);
                     } else {
                         // Listen for the next update
                         reg.addEventListener('updatefound', () => {
-                            console.log("SW: Update found listener triggered.");
+                            console.log("SW: Update found listener triggered. Attaching listener to installing worker.");
                             handleNewWorker(reg.installing);
                         });
                     }
@@ -561,15 +556,21 @@
                 // This listener ensures we only act when the new worker is fully ready (installed/waiting)
                 newWorker.addEventListener('statechange', () => {
                     if (newWorker.state === 'installed') {
-                        console.log('SW: Update downloaded and ready (state: installed). Sending message to clients.');
+                        console.log('SW: Update downloaded and ready (state: installed). Triggering client update.');
                         
-                        // ** CRITICAL FIX: Use postMessage to tell the controlling client (the open app) to update its UI **
+                        // 1. Send the message to the main app to show the banner
                         navigator.serviceWorker.ready.then(reg => {
                             if (reg.waiting) {
-                                // The new worker is waiting, send the message.
                                 reg.waiting.postMessage({ type: 'UPDATE_READY' });
                             }
                         });
+                        
+                        // 2. NEW AGGRESSIVE STEP: Tell the waiting worker to skip the wait and activate immediately.
+                        // This ensures the page is controlled by the NEW worker as soon as the user hits reload.
+                        if (newWorker.state === 'installed' && newWorker.postMessage) {
+                            console.log('SW: Sending SKIP_WAITING to new worker.');
+                            newWorker.postMessage({ type: 'SKIP_WAITING' });
+                        }
                     }
                 });
             };
