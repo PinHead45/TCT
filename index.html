@@ -43,8 +43,8 @@
         const { useState, useEffect, useCallback, useRef, useReducer } = React;
         
         // --- CONFIGURATION ---
-        // UPDATED: Bumped version to 2.0 for the aggressive Service Worker activation test
-        const CURRENT_APP_VERSION = '2.0'; 
+        // UPDATED: Bumped version to 2.1 for button text change
+        const CURRENT_APP_VERSION = '2.1'; 
         const LOCAL_STORAGE_VERSION_KEY = 'appVersion';
         const SERVICE_WORKER_UPDATE_KEY = 'swUpdatePending';
 
@@ -173,7 +173,9 @@
                 activateLock(timerId); // Request wake lock
             };
 
-            const buttonText = isStarted ? 'INSTANT RECALL & REDEPLOY' : 'INITIATE DEPLOYMENT CYCLE';
+            // UPDATED: Button text for when the timer is already running
+            const buttonText = isStarted ? 'REINITIATE COOLDOWN CYCLE' : 'INITIATE DEPLOYMENT CYCLE';
+            
             const buttonColor = colorClass.replace('bg-', 'bg-');
             const borderColor = colorClass.replace('bg-', 'border-');
 
@@ -450,8 +452,8 @@
         (function() {
             // Self-registering Service Worker (minimal code to handle caching)
             const SW_FILENAME = 'sw.js'; 
-            // UPDATED: Cache key bumped to 2.0
-            const CACHE_NAME = 'tactical-tracker-v2.0'; 
+            // UPDATED: Cache key bumped to 2.1
+            const CACHE_NAME = 'tactical-tracker-v2.1'; 
             const urlsToCache = [
                     '/', 
                 ];
