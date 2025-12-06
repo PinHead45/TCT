@@ -19,7 +19,7 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
 
     <!-- PWA Manifest -->
-    <link rel="manifest" href="data:application/manifest+json;base64,ewogICJuYW1lIjogIlRhY3RpY2FsIENvb2xkb3ducyIsCiAgInNob3J0X25hbWUiOiAiQ2hvcHBlclRpbWVyIiwKICAic3RhcnRfdXJsIjogIi4iLAogICJkaXNwbGF5IjogInN0YW5kb2xvbmUiLAogICJiYWNrZ3JvdW5kX2NvbG9yIjogIiMxMTE4MjciLAogICJ0aGVtZV9jb2xvciI6IiMxMTE4MjciLAogICJpY29ucyI6IFsgeyAic3JjIjogImh0dHBzOi8vcGxhY2Vob2xkLmNvLzE5MngxOTIvMGQxMTE3L2U1M2UzZS9wbmc/dGV4dD1UQ1QiLCAic2l6ZXMiOiAiMTkyeDE5MiIsICJ0eXBlIjogImltYWdlL3BuZyIgfSBdCn0=" />
+    <link rel="manifest" href="data:application/manifest+json;base64,ewogICJuYW1lIjogIlRhY3RpY2FsIENvb2xkb3ducyIsCiAgInNob3J0X25hbWUiOiAiQ2hvcHBlclRpbWVyIiwKICAic3RhcnRfdXJsIjogIi4iLAogICJkaXNwbGF5IjogInN0YW5kYWxvbmUiLAogICJiYWNrZ3JvdW5kX2NvbG9yIjogIiMxMTE4MjciLAogICJ0aGVtZV9jb2xvciI6IiMxMTE4MjciLAogICJpY29ucyI6IFsgeyAic3JjIjogImh0dHBzOi8vcGxhY2Vob2xkLmNvLzE5MngxOTIvMGQxMTE3L2U1M2UzZS9wbmc/dGV4dD1UQ1QiLCAic2l6ZXMiOiAiMTkyeDE5MiIsICJ0eXBlIjogImltYWdlL3BuZyIgfSBdCn0=" />
 
     <style>
         /* Prevent pull-to-refresh on mobile to feel more like an app */
@@ -34,8 +34,6 @@
 
     <div id="root"></div>
     
-    <!-- Screen wake lock functionality removed. The app will now respect system screen timeout settings. -->
-
     <script type="text/babel">
         const { useState, useEffect, useCallback, useRef } = React;
         
@@ -67,7 +65,7 @@
         };
 
         // --- Custom Hook: useTimer ---
-        const useTimer = (initialSeconds, synth) => {
+        const useTimer = (initialSeconds, synth, onCompletion) => {
             const [timeLeft, setTimeLeft] = useState(initialSeconds);
             const [isStarted, setIsStarted] = useState(false);
             const intervalRef = useRef(null);
@@ -79,7 +77,8 @@
                 }
                 synth?.triggerAttackRelease('D5', '8n'); 
                 setTimeLeft(initialSeconds); 
-            }, [initialSeconds, synth]);
+                onCompletion(); // Notify parent of completion
+            }, [initialSeconds, synth, onCompletion]);
 
             const triggerStartOrRestart = useCallback(() => {
                 if (!isStarted) {
@@ -88,6 +87,10 @@
                     setTimeLeft(initialSeconds);
                 }
             }, [isStarted]);
+
+            const stopTimer = useCallback(() => {
+                setIsStarted(false);
+            }, []);
 
             useEffect(() => {
                 if (isStarted) {
@@ -112,20 +115,31 @@
                 return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
             }, [isStarted, initialSeconds, handleTimerCompletion]);
             
-            return { timeLeft, isStarted, triggerStartOrRestart };
+            return { timeLeft, isStarted, triggerStartOrRestart, stopTimer };
         };
 
 
         /**
          * Component: TacticalTimerModule
          */
-        const TacticalTimerModule = ({ name, description, initialSeconds, colorClass, synth }) => {
-            const { timeLeft, isStarted, triggerStartOrRestart } = useTimer(initialSeconds, synth);
+        const TacticalTimerModule = ({ name, description, initialSeconds, colorClass, synth, activateLock, releaseLock, timerId }) => {
+            const handleCompletion = useCallback(() => {
+                // Timer automatically loops, no need to release lock here unless timer is explicitly stopped
+            }, []);
+
+            const { timeLeft, isStarted, triggerStartOrRestart, stopTimer } = useTimer(initialSeconds, synth, handleCompletion);
             
             const handleButtonClick = () => {
                 triggerStartOrRestart();
-                // Screen lock logic removed
+                activateLock(timerId); // Request wake lock
             };
+            
+            // Effect to manage wake lock acquisition and release based on timer state
+            useEffect(() => {
+                // If the timer is manually stopped (not implemented yet, but good practice), release the lock.
+                // For now, the lock stays active while running, and is managed globally by the App component.
+            }, [isStarted]);
+
 
             const buttonText = isStarted ? 'INSTANT RECALL & REDEPLOY' : 'INITIATE DEPLOYMENT CYCLE';
             const buttonColor = colorClass.replace('bg-', 'bg-');
@@ -178,12 +192,70 @@
         // --- Main App Component ---
         const App = () => {
             const [synth, setSynth] = useState(null);
+            // Stores the active lock object returned by the API
+            const wakeLockRef = useRef(null); 
+            const [lockStatus, setLockStatus] = useState(false);
+            
+            // Tracks if any timer is currently trying to use the lock (optional for this simple case, but good practice)
+            const [activeTimers, setActiveTimers] = useState({}); 
 
             useEffect(() => {
                 setSynth(new Tone.Synth().toDestination());
             }, []);
             
-            // Wake lock function removed
+            // --- Wake Lock Management ---
+
+            const requestWakeLock = useCallback(async (timerId) => {
+                if ('wakeLock' in navigator) {
+                    try {
+                        // Request a screen wake lock
+                        const lock = await navigator.wakeLock.request('screen');
+                        
+                        // Store the lock object and update status
+                        wakeLockRef.current = lock;
+                        setLockStatus(true);
+                        console.log('Screen Wake Lock successfully acquired.');
+
+                        // Listen for lock release by the OS (e.g., if the user minimizes the app)
+                        lock.addEventListener('release', () => {
+                            setLockStatus(false);
+                            console.log('Screen Wake Lock released.');
+                            wakeLockRef.current = null;
+                        });
+                    } catch (err) {
+                        setLockStatus(false);
+                        console.error(`Wake Lock Request Failed: ${err.name}, ${err.message}`);
+                    }
+                } else {
+                    console.warn("Wake Lock API not supported in this browser/PWA environment.");
+                    setLockStatus(false);
+                }
+            }, []);
+            
+            // Function to handle re-acquiring the lock if the user returns to the app
+            const handleVisibilityChange = useCallback(() => {
+                // If the app is visible and the lock was previously held, request it again
+                if (document.visibilityState === 'visible' && !wakeLockRef.current && ('wakeLock' in navigator)) {
+                    // Check if at least one timer is active (not strictly needed for this app, but safe)
+                    requestWakeLock('reacquire'); 
+                }
+            }, [requestWakeLock]);
+
+            // Global useEffect for managing the visibility listener
+            useEffect(() => {
+                document.addEventListener('visibilitychange', handleVisibilityChange);
+                // Clean up listener on unmount
+                return () => {
+                    document.removeEventListener('visibilitychange', handleVisibilityChange);
+                    if (wakeLockRef.current) {
+                        wakeLockRef.current.release().catch(e => console.error("Error releasing lock on unmount", e));
+                    }
+                };
+            }, [handleVisibilityChange]);
+            
+            // Lock release is managed automatically by the browser when the tab is backgrounded, 
+            // and we re-acquire it on visibility change. 
+            // We only explicitly request it on the user gesture (button click).
 
             return (
                 <div className="min-h-screen bg-gray-900 bg-[url('https://placehold.co/1920x1080/0d1117/2d3748/png?text=TACTICAL+OVERLAY')] bg-cover bg-center p-4 flex flex-col items-center overflow-y-auto">
@@ -200,7 +272,8 @@
                             initialSeconds={80} 
                             colorClass="bg-green-500" 
                             synth={synth}
-                            // activateLock prop removed
+                            activateLock={requestWakeLock}
+                            timerId="friendly"
                         />
 
                         <TacticalTimerModule 
@@ -209,15 +282,28 @@
                             initialSeconds={80} 
                             colorClass="bg-red-500" 
                             synth={synth}
-                            // activateLock prop removed
+                            activateLock={requestWakeLock}
+                            timerId="hostile"
                         />
                     </div>
 
                     <p className="mt-6 text-[10px] text-gray-500 text-center bg-black/50 p-2 rounded">
-                        Cycles are 80s. Click a button to start the timer. The app will respect your system's screen timeout settings.
+                        Cycles are 80s. Click a button to start the timer and request the Wake Lock.
                     </p>
                     
-                    {/* Status Indicator and Advice Message removed */}
+                    {/* Wake Lock Status Indicator */}
+                    <div className="mt-4 flex flex-col sm:flex-row gap-2 w-full max-w-sm justify-center mb-8">
+                        <p className="text-xs font-semibold text-center rounded p-1" style={{color: lockStatus ? '#48bb78' : '#e53e3e'}}>
+                            Screen Wake Lock Status: {lockStatus ? 'ACTIVE (Screen Should Stay On)' : 'INACTIVE (Blocked/Released)'}
+                        </p>
+                    </div>
+                    
+                    {/* Advice Message */}
+                    {!lockStatus && ('wakeLock' in navigator) && (
+                        <div className="w-full max-w-sm bg-red-900/30 border border-red-700/50 p-3 rounded-lg text-xs text-red-300 font-mono text-center mt-2">
+                            If the lock remains INACTIVE, your device/browser may require explicit permission in settings, or the PWA privileges are insufficient.
+                        </div>
+                    )}
 
                 </div>
             );
