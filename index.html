@@ -44,8 +44,8 @@
         const { useState, useEffect, useCallback, useRef, useReducer } = React;
         
         // --- CONFIGURATION ---
-        // UPDATED: Bumped version to 1.4 to force the Service Worker update check
-        const CURRENT_APP_VERSION = '1.4'; 
+        // UPDATED: Bumped version to 1.5 to force the Service Worker update check
+        const CURRENT_APP_VERSION = '1.5'; 
         const LOCAL_STORAGE_VERSION_KEY = 'appVersion';
         const SERVICE_WORKER_UPDATE_KEY = 'swUpdatePending';
 
@@ -444,8 +444,8 @@
         (function() {
             // Self-registering Service Worker (minimal code to handle caching)
             const SW_FILENAME = 'sw.js'; // We pretend we are using this file for registration
-            // UPDATED: Cache key bumped to 1.4
-            const CACHE_NAME = 'tactical-tracker-v1.4'; 
+            // UPDATED: Cache key bumped to 1.5
+            const CACHE_NAME = 'tactical-tracker-v1.5'; 
 
             const urlsToCache = [
                     '/', 
@@ -514,8 +514,8 @@
                         reg.addEventListener('updatefound', () => {
                             const newWorker = reg.installing;
                             newWorker.addEventListener('statechange', () => {
-                                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
-                                    // A new Service Worker has finished installing but hasn't taken over yet.
+                                // UPDATED LOGIC: Trigger the flag as soon as the new worker is installed and waiting
+                                if (newWorker.state === 'installed') {
                                     console.log('SW: Update downloaded and ready. Signaling React App.');
                                     // Set a flag in Local Storage for the React component to see and display the banner.
                                     localStorage.setItem('swUpdatePending', 'true');
