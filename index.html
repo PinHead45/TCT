@@ -42,6 +42,12 @@
     <script type="text/babel">
         const { useState, useEffect, useCallback, useRef, useReducer } = React;
         
+        // --- CONFIGURATION ---
+        // Change this version string with every functional update to force the update check
+        const CURRENT_APP_VERSION = '1.1'; 
+        const LOCAL_STORAGE_VERSION_KEY = 'appVersion';
+
+
         /**
          * Component: ProgressBar
          */
@@ -221,6 +227,7 @@
             const [synth, setSynth] = useState(null);
             const wakeLockRef = useRef(null); 
             const [lockStatus, setLockStatus] = useState(false);
+            const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
             
             // Refs to control child timers
             const friendlyTimerRef = useRef(null);
@@ -230,6 +237,24 @@
                 setSynth(new Tone.Synth().toDestination());
             }, []);
             
+            // --- Version / Update Checker ---
+            useEffect(() => {
+                const installedVersion = localStorage.getItem(LOCAL_STORAGE_VERSION_KEY);
+                
+                if (installedVersion !== CURRENT_APP_VERSION) {
+                    setIsUpdateAvailable(true);
+                    // Update the locally stored version to prevent the banner showing immediately after reload, 
+                    // but allow the reload to pull the new files.
+                    localStorage.setItem(LOCAL_STORAGE_VERSION_KEY, CURRENT_APP_VERSION);
+                }
+            }, []);
+
+            const handleUpdateReload = () => {
+                // Force a hard reload, bypassing the cache
+                window.location.reload(true); 
+            };
+
+
             // --- Wake Lock Management ---
 
             const releaseWakeLock = useCallback(async () => {
@@ -315,6 +340,21 @@
                     <h1 className="text-2xl sm:text-4xl font-extrabold text-white text-center mb-6 tracking-widest bg-black/50 p-2 rounded-lg border-b-4 border-red-600/70 shadow-lg font-mono">
                         TACTICAL COOLDOWN TRACKER
                     </h1>
+                    
+                    {/* UPDATE BANNER */}
+                    {isUpdateAvailable && (
+                        <div className="w-full max-w-5xl bg-yellow-900/40 border-2 border-yellow-500 p-3 mb-6 rounded-lg text-sm text-yellow-300 font-mono text-center animate-pulse">
+                            <p className="font-bold mb-2">CRITICAL UPDATE DETECTED!</p>
+                            <p>A new version ({CURRENT_APP_VERSION}) is available. Please update now to ensure maximum stability.</p>
+                            <button 
+                                onClick={handleUpdateReload}
+                                className="mt-3 p-2 w-full bg-yellow-600 text-gray-900 font-black rounded transition hover:bg-yellow-500 active:scale-95"
+                            >
+                                RELOAD AND INSTALL UPDATE
+                            </button>
+                        </div>
+                    )}
+
 
                     {/* Main Grid */}
                     <div className="w-full max-w-5xl grid grid-cols-2 gap-4 items-stretch flex-grow"> 
@@ -361,6 +401,9 @@
                             Screen Wake Lock Status: {lockStatus ? 'ACTIVE (Screen Should Stay On)' : 'INACTIVE (Blocked/Released)'}
                         </p>
                     </div>
+                    
+                    {/* Version Display */}
+                    <p className="text-[9px] text-gray-600 font-mono">App Version: {CURRENT_APP_VERSION}</p>
                     
                     {/* Advice Message */}
                     {!lockStatus && ('wakeLock' in navigator) && (
