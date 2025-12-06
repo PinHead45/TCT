@@ -43,8 +43,8 @@
         const { useState, useEffect, useCallback, useRef, useReducer } = React;
         
         // --- CONFIGURATION ---
-        // UPDATED: Bumped version to 2.1 for button text change
-        const CURRENT_APP_VERSION = '2.1'; 
+        // Version strictly set to 2.2 as requested.
+        const CURRENT_APP_VERSION = '2.2'; 
         const LOCAL_STORAGE_VERSION_KEY = 'appVersion';
         const SERVICE_WORKER_UPDATE_KEY = 'swUpdatePending';
 
@@ -54,16 +54,16 @@
          */
         const ProgressBar = ({ timeLeft, initialSeconds, primaryColor, isStarted }) => {
             const percentage = (timeLeft / initialSeconds) * 100;
-
-            let barColor = primaryColor;
             
-            if (percentage <= 15 && isStarted) {
-                barColor = 'bg-red-700 animate-pulse'; 
-            } else if (percentage <= 40 && isStarted) {
-                barColor = 'bg-yellow-500';
-            } else if (!isStarted) {
-                barColor = 'bg-gray-600';
-            }
+            // Check if we are in the last 15 seconds AND the timer is running
+            const isCritical = isStarted && percentage <= 15 && percentage > 0;
+            
+            // Progress bar color logic: static primary color, pulsing when critical, gray when stopped
+            const barColor = isCritical 
+                ? `${primaryColor.replace('bg-', 'bg-')} animate-pulse` 
+                : isStarted 
+                    ? primaryColor 
+                    : 'bg-gray-600'; 
 
             return (
                 <div className="w-full h-10 bg-gray-900 border-2 border-dashed border-gray-600 rounded-lg overflow-hidden relative shadow-inner">
@@ -77,20 +77,19 @@
         };
 
         // --- Custom Hook: useTimer ---
-        const useTimer = (initialSeconds, synth, onCompletion, stopGlobalTimer) => {
+        const useTimer = (initialSeconds, playWarningFn, onCompletion, stopGlobalTimer) => {
             const [timeLeft, setTimeLeft] = useState(initialSeconds);
             const [isStarted, setIsStarted] = useState(false);
-            const [soundPlayed, setSoundPlayed] = useState(false); // Tracks if the 5s warning has played
+            const [soundPlayed, setSoundPlayed] = useState(false); // Tracks if the warning has played
             const intervalRef = useRef(null);
 
             const playWarningSound = useCallback(() => {
-                if (synth && typeof Tone !== 'undefined' && Tone.context.state !== 'running') {
+                if (typeof Tone !== 'undefined' && Tone.context.state !== 'running') {
                     Tone.start();
                 }
-                // Plays a quick warning tone (C4)
-                synth?.triggerAttackRelease('C4', '8n'); 
+                playWarningFn(); // Execute the passed function (friendly or hostile sound)
                 setSoundPlayed(true);
-            }, [synth]);
+            }, [playWarningFn]);
 
             const handleLoopReset = useCallback(() => {
                 setTimeLeft(initialSeconds); 
@@ -124,7 +123,8 @@
                                 const newTime = prevTime - 1;
                                 
                                 // 1. WARNING SOUND CHECK (5 seconds remaining)
-                                if (newTime <= 5 && newTime > 0 && !soundPlayed) {
+                                // Trigger warning sound only once when hitting 5s
+                                if (newTime === 5 && !soundPlayed) {
                                     playWarningSound();
                                 }
                                 
@@ -155,12 +155,12 @@
         /**
          * Component: TacticalTimerModule
          */
-        const TacticalTimerModule = React.forwardRef(({ name, description, initialSeconds, colorClass, synth, activateLock, stopLock, timerId }, ref) => {
+        const TacticalTimerModule = React.forwardRef(({ name, description, initialSeconds, colorClass, playWarningFn, activateLock, stopLock, timerId }, ref) => {
             const handleCompletion = useCallback(() => {
                 // Timer automatically loops
             }, []);
 
-            const { timeLeft, isStarted, triggerStartOrRestart, stopTimer } = useTimer(initialSeconds, synth, handleCompletion, stopLock);
+            const { timeLeft, isStarted, triggerStartOrRestart, stopTimer } = useTimer(initialSeconds, playWarningFn, handleCompletion, stopLock);
             
             // Expose the stop function to the parent component via the ref
             React.useImperativeHandle(ref, () => ({
@@ -173,21 +173,19 @@
                 activateLock(timerId); // Request wake lock
             };
 
-            // UPDATED: Button text for when the timer is already running
             const buttonText = isStarted ? 'REINITIATE COOLDOWN CYCLE' : 'INITIATE DEPLOYMENT CYCLE';
-            
             const buttonColor = colorClass.replace('bg-', 'bg-');
             const borderColor = colorClass.replace('bg-', 'border-');
 
             let statusText = isStarted ? `ACTIVE COOLDOWN / ${timeLeft}s REMAINING` : 'STATUS: STANDBY';
             let statusColor = 'text-gray-500';
             
-            if (isStarted && timeLeft <= 10) {
-                statusText = 'INBOUND! LANDING ZONE CLEARANCE';
+            if (isStarted && timeLeft <= 15) { // Critical zone trigger
+                statusText = 'CRITICAL ZONE: LANDING IMMINENT';
                 statusColor = colorClass.replace('bg-', 'text-');
                 if (colorClass === 'bg-red-500') statusColor = 'text-red-500 animate-pulse';
             } else if (isStarted && timeLeft === initialSeconds) {
-                statusText = 'REDEPLOYING CHOPPER...';
+                statusText = 'REDEPLOYING ASSET...';
                 statusColor = 'text-white animate-pulse';
             } else if (isStarted) {
                 statusColor = colorClass.replace('bg-', 'text-');
@@ -238,9 +236,34 @@
             const hostileTimerRef = useRef(null);
             
             useEffect(() => {
+                // Initialize Tone.js synth for audio
                 setSynth(new Tone.Synth().toDestination());
             }, []);
             
+            // --- Audio Logic Functions ---
+            const playFriendlyWarning = useCallback(() => {
+                if (!synth) return;
+                // Single tone for friendly completion/alert (high and clear)
+                synth.triggerAttackRelease('C5', '8n'); 
+            }, [synth]);
+
+            const playHostileWarning = useCallback(() => {
+                if (!synth) return;
+                // UPDATED: High-pitched, rapid alternating notes (E5/F5) for a "squawking" nuclear siren alarm.
+                const now = Tone.now();
+                const duration = '32n';
+                const interval = 0.07; // Rapid pulses
+
+                // 6 rapid, dissonant pulses
+                synth.triggerAttackRelease('E5', duration, now);
+                synth.triggerAttackRelease('F5', duration, now + interval * 1);
+                synth.triggerAttackRelease('E5', duration, now + interval * 2);
+                synth.triggerAttackRelease('F5', duration, now + interval * 3);
+                synth.triggerAttackRelease('E5', duration, now + interval * 4);
+                synth.triggerAttackRelease('F5', duration, now + interval * 5);
+            }, [synth]);
+
+
             // --- Version / Update Checker & Messaging Listener ---
             useEffect(() => {
                 // 1. Initial Check: Update the stored version every time to avoid the update banner showing on fresh load.
@@ -388,11 +411,11 @@
                     <div className="w-full max-w-5xl grid grid-cols-2 gap-4 items-stretch flex-grow"> 
                         <TacticalTimerModule 
                             ref={friendlyTimerRef}
-                            name="FRIENDLY GUNSHIP" 
-                            description="Allied Redeployment"
+                            name="FRIENDLY REINFORCEMENT" 
+                            description="Allied asset deployment cycle."
                             initialSeconds={80} 
                             colorClass="bg-green-500" 
-                            synth={synth}
+                            playWarningFn={playFriendlyWarning} // Use friendly sound
                             activateLock={requestWakeLock}
                             stopLock={checkAndReleaseLock}
                             timerId="friendly"
@@ -400,11 +423,11 @@
 
                         <TacticalTimerModule 
                             ref={hostileTimerRef}
-                            name="HOSTILE GUNSHIP" 
-                            description="Enemy Redeployment"
+                            name="HOSTILE ASSET" 
+                            description="Enemy asset deployment cycle."
                             initialSeconds={80} 
                             colorClass="bg-red-500" 
-                            synth={synth}
+                            playWarningFn={playHostileWarning} // Use the new, squawking siren sound
                             activateLock={requestWakeLock}
                             stopLock={checkAndReleaseLock}
                             timerId="hostile"
@@ -452,8 +475,8 @@
         (function() {
             // Self-registering Service Worker (minimal code to handle caching)
             const SW_FILENAME = 'sw.js'; 
-            // UPDATED: Cache key bumped to 2.1
-            const CACHE_NAME = 'tactical-tracker-v2.1'; 
+            // VERSION REVERTED TO 2.2 as requested
+            const CACHE_NAME = 'tactical-tracker-v2.2'; 
             const urlsToCache = [
                     '/', 
                 ];
