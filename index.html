@@ -5,6 +5,11 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Tactical Cooldown Tracker</title>
     
+    <!-- PWA Update Optimization: Tell the browser NOT to cache the page aggressively -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+
     <!-- React & ReactDOM -->
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -35,7 +40,7 @@
     <div id="root"></div>
     
     <script type="text/babel">
-        const { useState, useEffect, useCallback, useRef } = React;
+        const { useState, useEffect, useCallback, useRef, useReducer } = React;
         
         /**
          * Component: ProgressBar
@@ -65,20 +70,26 @@
         };
 
         // --- Custom Hook: useTimer ---
-        const useTimer = (initialSeconds, synth, onCompletion) => {
+        const useTimer = (initialSeconds, synth, onCompletion, stopGlobalTimer) => {
             const [timeLeft, setTimeLeft] = useState(initialSeconds);
             const [isStarted, setIsStarted] = useState(false);
+            const [soundPlayed, setSoundPlayed] = useState(false); // Tracks if the 5s warning has played
             const intervalRef = useRef(null);
 
-            const handleTimerCompletion = useCallback(() => {
-                // Ensure audio context is running before playing sound
+            const playWarningSound = useCallback(() => {
                 if (synth && typeof Tone !== 'undefined' && Tone.context.state !== 'running') {
                     Tone.start();
                 }
-                synth?.triggerAttackRelease('D5', '8n'); 
+                // Plays a quick warning tone (C4)
+                synth?.triggerAttackRelease('C4', '8n'); 
+                setSoundPlayed(true);
+            }, [synth]);
+
+            const handleLoopReset = useCallback(() => {
                 setTimeLeft(initialSeconds); 
+                setSoundPlayed(false); // Reset sound flag for the next cycle
                 onCompletion(); // Notify parent of completion
-            }, [initialSeconds, synth, onCompletion]);
+            }, [initialSeconds, onCompletion]);
 
             const triggerStartOrRestart = useCallback(() => {
                 if (!isStarted) {
@@ -86,24 +97,40 @@
                 } else {
                     setTimeLeft(initialSeconds);
                 }
-            }, [isStarted]);
+                setSoundPlayed(false); // Ensure sound flag is reset on manual restart
+            }, [isStarted, initialSeconds]);
 
             const stopTimer = useCallback(() => {
                 setIsStarted(false);
-            }, []);
+                setTimeLeft(initialSeconds); // Reset time when stopping (clears the bar)
+                setSoundPlayed(false); // Ensure sound flag is reset on stop
+                stopGlobalTimer(); // Notify App to check lock status
+            }, [initialSeconds, stopGlobalTimer]);
 
             useEffect(() => {
                 if (isStarted) {
                     if (intervalRef.current) clearInterval(intervalRef.current);
+                    
                     intervalRef.current = setInterval(() => {
                         setTimeLeft(prevTime => {
-                            if (prevTime > 1) return prevTime - 1;
-                            else if (prevTime === 1) {
-                                handleTimerCompletion();
-                                return 0; 
+                            if (prevTime > 0) {
+                                const newTime = prevTime - 1;
+                                
+                                // 1. WARNING SOUND CHECK (5 seconds remaining)
+                                // Only play if time is 5 or less, greater than 0, and hasn't played yet this cycle.
+                                if (newTime <= 5 && newTime > 0 && !soundPlayed) {
+                                    playWarningSound();
+                                }
+                                
+                                // 2. LOOP RESET CHECK (0 seconds remaining)
+                                if (newTime === 0) {
+                                     handleLoopReset(); 
+                                     return initialSeconds; // Reset immediately for the next loop display
+                                }
+
+                                return newTime;
                             }
-                            if (prevTime === 0) return initialSeconds;
-                            return prevTime;
+                            return initialSeconds;
                         });
                     }, 1000);
                 } else {
@@ -113,39 +140,38 @@
                     }
                 }
                 return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
-            }, [isStarted, initialSeconds, handleTimerCompletion]);
+            }, [isStarted, initialSeconds, handleLoopReset, playWarningSound, soundPlayed]);
             
-            return { timeLeft, isStarted, triggerStartOrRestart, stopTimer };
+            return { timeLeft, isStarted, triggerStartOrRestart, stopTimer, setIsStarted };
         };
 
 
         /**
          * Component: TacticalTimerModule
          */
-        const TacticalTimerModule = ({ name, description, initialSeconds, colorClass, synth, activateLock, releaseLock, timerId }) => {
+        const TacticalTimerModule = React.forwardRef(({ name, description, initialSeconds, colorClass, synth, activateLock, stopLock, timerId }, ref) => {
             const handleCompletion = useCallback(() => {
-                // Timer automatically loops, no need to release lock here unless timer is explicitly stopped
+                // Timer automatically loops
             }, []);
 
-            const { timeLeft, isStarted, triggerStartOrRestart, stopTimer } = useTimer(initialSeconds, synth, handleCompletion);
+            const { timeLeft, isStarted, triggerStartOrRestart, stopTimer } = useTimer(initialSeconds, synth, handleCompletion, stopLock);
             
+            // Expose the stop function to the parent component via the ref
+            React.useImperativeHandle(ref, () => ({
+                stop: stopTimer, // Renamed to 'stop' for simplicity in App component
+                isStarted: isStarted,
+            }));
+
             const handleButtonClick = () => {
                 triggerStartOrRestart();
                 activateLock(timerId); // Request wake lock
             };
-            
-            // Effect to manage wake lock acquisition and release based on timer state
-            useEffect(() => {
-                // If the timer is manually stopped (not implemented yet, but good practice), release the lock.
-                // For now, the lock stays active while running, and is managed globally by the App component.
-            }, [isStarted]);
-
 
             const buttonText = isStarted ? 'INSTANT RECALL & REDEPLOY' : 'INITIATE DEPLOYMENT CYCLE';
             const buttonColor = colorClass.replace('bg-', 'bg-');
             const borderColor = colorClass.replace('bg-', 'border-');
 
-            let statusText = isStarted ? 'ACTIVE COOLDOWN / ON LOOP' : 'STATUS: STANDBY';
+            let statusText = isStarted ? `ACTIVE COOLDOWN / ${timeLeft}s REMAINING` : 'STATUS: STANDBY';
             let statusColor = 'text-gray-500';
             
             if (isStarted && timeLeft <= 10) {
@@ -187,39 +213,50 @@
                     </button>
                 </div>
             );
-        };
+        });
+
 
         // --- Main App Component ---
         const App = () => {
             const [synth, setSynth] = useState(null);
-            // Stores the active lock object returned by the API
             const wakeLockRef = useRef(null); 
             const [lockStatus, setLockStatus] = useState(false);
             
-            // Tracks if any timer is currently trying to use the lock (optional for this simple case, but good practice)
-            const [activeTimers, setActiveTimers] = useState({}); 
-
+            // Refs to control child timers
+            const friendlyTimerRef = useRef(null);
+            const hostileTimerRef = useRef(null);
+            
             useEffect(() => {
                 setSynth(new Tone.Synth().toDestination());
             }, []);
             
             // --- Wake Lock Management ---
 
+            const releaseWakeLock = useCallback(async () => {
+                if (wakeLockRef.current) {
+                    await wakeLockRef.current.release().catch(e => console.error("Error releasing lock:", e));
+                    wakeLockRef.current = null;
+                    setLockStatus(false);
+                    console.log('Screen Wake Lock explicitly released.');
+                }
+            }, []);
+
             const requestWakeLock = useCallback(async (timerId) => {
                 if ('wakeLock' in navigator) {
+                    if (wakeLockRef.current) {
+                        // Lock is already held, do nothing
+                        return;
+                    }
                     try {
-                        // Request a screen wake lock
                         const lock = await navigator.wakeLock.request('screen');
                         
-                        // Store the lock object and update status
                         wakeLockRef.current = lock;
                         setLockStatus(true);
                         console.log('Screen Wake Lock successfully acquired.');
 
-                        // Listen for lock release by the OS (e.g., if the user minimizes the app)
                         lock.addEventListener('release', () => {
                             setLockStatus(false);
-                            console.log('Screen Wake Lock released.');
+                            console.log('Screen Wake Lock released by OS/minimization.');
                             wakeLockRef.current = null;
                         });
                     } catch (err) {
@@ -227,35 +264,50 @@
                         console.error(`Wake Lock Request Failed: ${err.name}, ${err.message}`);
                     }
                 } else {
-                    console.warn("Wake Lock API not supported in this browser/PWA environment.");
                     setLockStatus(false);
                 }
             }, []);
             
+            // Check if any timers are still running before releasing the lock
+            const checkAndReleaseLock = useCallback(() => {
+                const friendlyActive = friendlyTimerRef.current && friendlyTimerRef.current.isStarted;
+                const hostileActive = hostileTimerRef.current && hostileTimerRef.current.isStarted;
+                
+                if (!friendlyActive && !hostileActive && wakeLockRef.current) {
+                    releaseWakeLock();
+                }
+            }, [releaseWakeLock]);
+
             // Function to handle re-acquiring the lock if the user returns to the app
             const handleVisibilityChange = useCallback(() => {
-                // If the app is visible and the lock was previously held, request it again
-                if (document.visibilityState === 'visible' && !wakeLockRef.current && ('wakeLock' in navigator)) {
-                    // Check if at least one timer is active (not strictly needed for this app, but safe)
-                    requestWakeLock('reacquire'); 
+                // Check if any timer is logically running
+                const friendlyActive = friendlyTimerRef.current && friendlyTimerRef.current.isStarted;
+                const hostileActive = hostileTimerRef.current && hostileTimerRef.current.isStarted;
+                const anyTimerActive = friendlyActive || hostileActive;
+
+                if (document.visibilityState === 'visible' && anyTimerActive && !wakeLockRef.current && ('wakeLock' in navigator)) {
+                    requestWakeLock('reacquire_on_focus'); 
                 }
             }, [requestWakeLock]);
 
-            // Global useEffect for managing the visibility listener
+            // Global useEffect for managing the visibility listener and initial cleanup
             useEffect(() => {
                 document.addEventListener('visibilitychange', handleVisibilityChange);
-                // Clean up listener on unmount
+                
+                // Final cleanup on unmount
                 return () => {
                     document.removeEventListener('visibilitychange', handleVisibilityChange);
-                    if (wakeLockRef.current) {
-                        wakeLockRef.current.release().catch(e => console.error("Error releasing lock on unmount", e));
-                    }
+                    releaseWakeLock(); // Release lock when component unmounts
                 };
-            }, [handleVisibilityChange]);
+            }, [handleVisibilityChange, releaseWakeLock]);
             
-            // Lock release is managed automatically by the browser when the tab is backgrounded, 
-            // and we re-acquire it on visibility change. 
-            // We only explicitly request it on the user gesture (button click).
+            // --- Global Reset Function ---
+            const handleGlobalReset = () => {
+                // Call the exposed 'stop' function on each timer, which resets the time and sets isStarted=false
+                if (friendlyTimerRef.current) friendlyTimerRef.current.stop(); 
+                if (hostileTimerRef.current) hostileTimerRef.current.stop(); 
+                releaseWakeLock();
+            };
 
             return (
                 <div className="min-h-screen bg-gray-900 bg-[url('https://placehold.co/1920x1080/0d1117/2d3748/png?text=TACTICAL+OVERLAY')] bg-cover bg-center p-4 flex flex-col items-center overflow-y-auto">
@@ -267,25 +319,37 @@
                     {/* Main Grid */}
                     <div className="w-full max-w-5xl grid grid-cols-2 gap-4 items-stretch flex-grow"> 
                         <TacticalTimerModule 
+                            ref={friendlyTimerRef}
                             name="FRIENDLY GUNSHIP" 
                             description="Allied Redeployment"
                             initialSeconds={80} 
                             colorClass="bg-green-500" 
                             synth={synth}
                             activateLock={requestWakeLock}
+                            stopLock={checkAndReleaseLock}
                             timerId="friendly"
                         />
 
                         <TacticalTimerModule 
+                            ref={hostileTimerRef}
                             name="HOSTILE GUNSHIP" 
                             description="Enemy Redeployment"
                             initialSeconds={80} 
                             colorClass="bg-red-500" 
                             synth={synth}
                             activateLock={requestWakeLock}
+                            stopLock={checkAndReleaseLock}
                             timerId="hostile"
                         />
                     </div>
+                    
+                    {/* Global Reset Button */}
+                    <button 
+                        onClick={handleGlobalReset}
+                        className="mt-6 w-full max-w-5xl p-3 text-sm font-black rounded-lg text-white shadow-xl uppercase tracking-wider transition transform active:scale-[0.98] border-b-4 bg-gray-700 hover:bg-gray-600 border-gray-500 font-mono"
+                    >
+                        RESET ALL & STANDBY (Releases Screen Lock)
+                    </button>
 
                     <p className="mt-6 text-[10px] text-gray-500 text-center bg-black/50 p-2 rounded">
                         Cycles are 80s. Click a button to start the timer and request the Wake Lock.
