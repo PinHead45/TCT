@@ -43,8 +43,8 @@
         const { useState, useEffect, useCallback, useRef, useReducer } = React;
         
         // --- CONFIGURATION ---
-        // UPDATED: Bumped version to 1.6 to force the Service Worker update check
-        const CURRENT_APP_VERSION = '1.6'; 
+        // UPDATED: Bumped version to 1.8 to force the Service Worker update check
+        const CURRENT_APP_VERSION = '1.8'; 
         const LOCAL_STORAGE_VERSION_KEY = 'appVersion';
         const SERVICE_WORKER_UPDATE_KEY = 'swUpdatePending';
 
@@ -463,8 +463,8 @@
         (function() {
             // Self-registering Service Worker (minimal code to handle caching)
             const SW_FILENAME = 'sw.js'; 
-            // UPDATED: Cache key bumped to 1.6
-            const CACHE_NAME = 'tactical-tracker-v1.6'; 
+            // UPDATED: Cache key bumped to 1.8
+            const CACHE_NAME = 'tactical-tracker-v1.8'; 
 
             const urlsToCache = [
                     '/', 
@@ -515,32 +515,43 @@
             
             // Listener for the new worker's state change to 'installed'
             const registerAndListen = async () => {
-                if ('serviceWorker' in navigator) {
-                    const swBlob = new Blob([swContent], { type: 'application/javascript' });
-                    const swUrl = URL.createObjectURL(swBlob);
-                    
-                    try {
-                        const reg = await navigator.serviceWorker.register(swUrl, { scope: '/' });
-                        console.log('SW registration successful with scope:', reg.scope);
-                        
-                        reg.update(); // Request update immediately
-
-                        // Check if a new worker is currently installing or waiting
-                        if (reg.installing || reg.waiting) {
-                            console.log("SW: New worker already in progress.");
-                            handleNewWorker(reg.installing || reg.waiting);
-                        } else {
-                            // Listen for the next update
-                            reg.addEventListener('updatefound', () => {
-                                console.log("SW: Update found listener triggered.");
-                                handleNewWorker(reg.installing);
-                            });
-                        }
-                    } catch (error) {
-                        console.error('SW registration failed:', error);
-                    }
-                } else {
+                if (!('serviceWorker' in navigator)) {
                     console.log('Service Worker not supported in this browser.');
+                    return;
+                }
+                
+                const swBlob = new Blob([swContent], { type: 'application/javascript' });
+                const swUrl = URL.createObjectURL(swBlob);
+                
+                try {
+                    const reg = await navigator.serviceWorker.register(swUrl, { scope: '/' });
+                    console.log('SW registration successful with scope:', reg.scope);
+                    
+                    // CRITICAL: Aggressive update polling interval
+                    const pollInterval = setInterval(() => {
+                        // Only poll if the update process hasn't already started or completed
+                        if (!reg.waiting && !reg.installing) {
+                             console.log("SW Poll: Forcing update check via reg.update()");
+                             reg.update();
+                        } else if (reg.waiting || reg.installing) {
+                            // If an update is in progress, stop polling and let the listener take over
+                            clearInterval(pollInterval);
+                        }
+                    }, 5000); // Check every 5 seconds
+
+                    // Check if a new worker is currently installing or waiting
+                    if (reg.installing || reg.waiting) {
+                        console.log("SW: New worker already in progress.");
+                        handleNewWorker(reg.installing || reg.waiting);
+                    } else {
+                        // Listen for the next update
+                        reg.addEventListener('updatefound', () => {
+                            console.log("SW: Update found listener triggered.");
+                            handleNewWorker(reg.installing);
+                        });
+                    }
+                } catch (error) {
+                    console.error('SW registration failed:', error);
                 }
             };
             
@@ -563,6 +574,7 @@
                 });
             };
 
+            // Start the registration and listener process
             registerAndListen();
         })();
     </script>
