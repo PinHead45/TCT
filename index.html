@@ -43,8 +43,8 @@
         const { useState, useEffect, useCallback, useRef, useReducer } = React;
         
         // --- CONFIGURATION ---
-        // Version strictly set to 2.2 as requested.
-        const CURRENT_APP_VERSION = '2.2'; 
+        // Version strictly set to 2.3.
+        const CURRENT_APP_VERSION = '2.3'; 
         const LOCAL_STORAGE_VERSION_KEY = 'appVersion';
         const SERVICE_WORKER_UPDATE_KEY = 'swUpdatePending';
 
@@ -173,7 +173,9 @@
                 activateLock(timerId); // Request wake lock
             };
 
-            const buttonText = isStarted ? 'REINITIATE COOLDOWN CYCLE' : 'INITIATE DEPLOYMENT CYCLE';
+            // MODIFIED: Button text is now "REINITIATE DEPLOYMENT CYCLE" when running
+            const buttonText = isStarted ? 'REINITIATE DEPLOYMENT CYCLE' : 'INITIATE DEPLOYMENT CYCLE';
+            
             const buttonColor = colorClass.replace('bg-', 'bg-');
             const borderColor = colorClass.replace('bg-', 'border-');
 
@@ -249,7 +251,7 @@
 
             const playHostileWarning = useCallback(() => {
                 if (!synth) return;
-                // UPDATED: High-pitched, rapid alternating notes (E5/F5) for a "squawking" nuclear siren alarm.
+                // High-pitched, rapid alternating notes (E5/F5) for a "squawking" nuclear siren alarm.
                 const now = Tone.now();
                 const duration = '32n';
                 const interval = 0.07; // Rapid pulses
@@ -411,7 +413,7 @@
                     <div className="w-full max-w-5xl grid grid-cols-2 gap-4 items-stretch flex-grow"> 
                         <TacticalTimerModule 
                             ref={friendlyTimerRef}
-                            name="FRIENDLY REINFORCEMENT" 
+                            name="FRIENDLY ASSET" 
                             description="Allied asset deployment cycle."
                             initialSeconds={80} 
                             colorClass="bg-green-500" 
@@ -427,7 +429,7 @@
                             description="Enemy asset deployment cycle."
                             initialSeconds={80} 
                             colorClass="bg-red-500" 
-                            playWarningFn={playHostileWarning} // Use the new, squawking siren sound
+                            playWarningFn={playHostileWarning} // Use the squawking siren sound
                             activateLock={requestWakeLock}
                             stopLock={checkAndReleaseLock}
                             timerId="hostile"
@@ -475,8 +477,8 @@
         (function() {
             // Self-registering Service Worker (minimal code to handle caching)
             const SW_FILENAME = 'sw.js'; 
-            // VERSION REVERTED TO 2.2 as requested
-            const CACHE_NAME = 'tactical-tracker-v2.2'; 
+            // VERSION REMAINS 2.3
+            const CACHE_NAME = 'tactical-tracker-v2.3'; 
             const urlsToCache = [
                     '/', 
                 ];
