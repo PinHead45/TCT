@@ -1,4 +1,4 @@
-!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -43,9 +43,10 @@
         const { useState, useEffect, useCallback, useRef, useReducer } = React;
         
         // --- CONFIGURATION ---
-        // Changed to 1.2 to test the update feature
-        const CURRENT_APP_VERSION = '1.2'; 
+        // Bumped to 1.3 to force the Service Worker update check
+        const CURRENT_APP_VERSION = '1.3'; 
         const LOCAL_STORAGE_VERSION_KEY = 'appVersion';
+        const SERVICE_WORKER_UPDATE_KEY = 'swUpdatePending';
 
 
         /**
@@ -123,7 +124,6 @@
                                 const newTime = prevTime - 1;
                                 
                                 // 1. WARNING SOUND CHECK (5 seconds remaining)
-                                // Only play if time is 5 or less, greater than 0, and hasn't played yet this cycle.
                                 if (newTime <= 5 && newTime > 0 && !soundPlayed) {
                                     playWarningSound();
                                 }
@@ -227,8 +227,13 @@
             const [synth, setSynth] = useState(null);
             const wakeLockRef = useRef(null); 
             const [lockStatus, setLockStatus] = useState(false);
-            const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
             
+            // PWA Update State: Check if the *Service Worker* has signalled an update is ready.
+            const [isUpdateReady, setIsUpdateReady] = useState(false);
+            
+            // Version Check State: Check if the app version in code is newer than the last run version.
+            const [isUpdateAvailable, setIsUpdateAvailable] = useState(false);
+
             // Refs to control child timers
             const friendlyTimerRef = useRef(null);
             const hostileTimerRef = useRef(null);
@@ -241,16 +246,23 @@
             useEffect(() => {
                 const installedVersion = localStorage.getItem(LOCAL_STORAGE_VERSION_KEY);
                 
+                // 1. Check for Code Version mismatch (This still works as a fallback)
                 if (installedVersion !== CURRENT_APP_VERSION) {
                     setIsUpdateAvailable(true);
-                    // Update the locally stored version to prevent the banner showing immediately after reload, 
-                    // but allow the reload to pull the new files.
+                    // Update the locally stored version to prevent the banner showing immediately after reload.
                     localStorage.setItem(LOCAL_STORAGE_VERSION_KEY, CURRENT_APP_VERSION);
                 }
+
+                // 2. Check for Service Worker Pending Update (More reliable for PWA updates)
+                if (localStorage.getItem(SERVICE_WORKER_UPDATE_KEY) === 'true') {
+                    setIsUpdateReady(true);
+                }
+
             }, []);
 
             const handleUpdateReload = () => {
-                // Force a hard reload, bypassing the cache
+                // Clear the flag and force a hard reload, bypassing the cache
+                localStorage.removeItem(SERVICE_WORKER_UPDATE_KEY);
                 window.location.reload(true); 
             };
 
@@ -334,6 +346,8 @@
                 releaseWakeLock();
             };
 
+            const showUpdateBanner = isUpdateAvailable || isUpdateReady;
+
             return (
                 <div className="min-h-screen bg-gray-900 bg-[url('https://placehold.co/1920x1080/0d1117/2d3748/png?text=TACTICAL+OVERLAY')] bg-cover bg-center p-4 flex flex-col items-center overflow-y-auto">
                     
@@ -341,14 +355,19 @@
                         TACTICAL COOLDOWN TRACKER
                     </h1>
                     
-                    {/* UPDATE BANNER */}
-                    {isUpdateAvailable && (
+                    {/* UPDATE BANNER (Triggered by either version mismatch OR Service Worker waiting) */}
+                    {showUpdateBanner && (
                         <div className="w-full max-w-5xl bg-yellow-900/40 border-2 border-yellow-500 p-3 mb-6 rounded-lg text-sm text-yellow-300 font-mono text-center animate-pulse">
                             <p className="font-bold mb-2">CRITICAL UPDATE DETECTED!</p>
-                            <p>A new version ({CURRENT_APP_VERSION}) is available. Please update now to ensure maximum stability.</p>
+                            <p className="mb-3">
+                                {isUpdateReady 
+                                    ? "A critical update has been downloaded and is ready to install."
+                                    : `A new version (${CURRENT_APP_VERSION}) is available. Please update now to ensure maximum stability.`
+                                }
+                            </p>
                             <button 
                                 onClick={handleUpdateReload}
-                                className="mt-3 p-2 w-full bg-yellow-600 text-gray-900 font-black rounded transition hover:bg-yellow-500 active:scale-95"
+                                className="mt-1 p-2 w-full bg-yellow-600 text-gray-900 font-black rounded transition hover:bg-yellow-500 active:scale-95"
                             >
                                 RELOAD AND INSTALL UPDATE
                             </button>
@@ -418,5 +437,98 @@
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
+    
+    <!-- Dedicated script for PWA Service Worker Registration and Update Logic -->
+    <script>
+        (function() {
+            // Self-registering Service Worker (minimal code to handle caching)
+            const SW_FILENAME = 'sw.js'; // We pretend we are using this file for registration
+            const CACHE_NAME = 'tactical-tracker-v1.3'; // Cache key matches version
+
+            // We must inject the Service Worker code inline since we are restricted to a single file.
+            const swContent = `
+                const CACHE_NAME = '${CACHE_NAME}';
+                const urlsToCache = [
+                    '/', 
+                    // Since all logic is in index.html, we only cache the root document.
+                    // This is sufficient for a single-file PWA.
+                ];
+
+                self.addEventListener('install', event => {
+                    console.log('SW: Installing and caching assets...');
+                    self.skipWaiting();
+                    event.waitUntil(
+                        caches.open(CACHE_NAME)
+                            .then(cache => cache.addAll(urlsToCache))
+                    );
+                });
+
+                self.addEventListener('activate', event => {
+                    console.log('SW: Activating. Clearing old caches.');
+                    event.waitUntil(
+                        caches.keys().then(cacheNames => {
+                            return Promise.all(
+                                cacheNames.filter(cacheName => cacheName !== CACHE_NAME)
+                                           .map(cacheName => caches.delete(cacheName))
+                            );
+                        }).then(() => self.clients.claim())
+                    );
+                });
+
+                self.addEventListener('fetch', event => {
+                    // Strategy: Cache-first (for offline capability)
+                    event.respondWith(
+                        caches.match(event.request)
+                            .then(response => {
+                                // Cache hit - return response
+                                if (response) return response;
+                                
+                                // No cache hit - fetch from network
+                                return fetch(event.request);
+                            })
+                    );
+                });
+            `;
+
+            if ('serviceWorker' in navigator) {
+                // We create a Blob URL for the Service Worker content so we can register it.
+                const swBlob = new Blob([swContent], { type: 'application/javascript' });
+                const swUrl = URL.createObjectURL(swBlob);
+                
+                navigator.serviceWorker.register(swUrl, { scope: '/' })
+                    .then(reg => {
+                        console.log('SW registration successful with scope:', reg.scope);
+                        
+                        // Check for update right after registration (sometimes helps force it)
+                        reg.update();
+
+                        // Listener for when a new Service Worker is found and waiting
+                        reg.addEventListener('updatefound', () => {
+                            const newWorker = reg.installing;
+                            newWorker.addEventListener('statechange', () => {
+                                if (newWorker.state === 'installed' && navigator.serviceWorker.controller) {
+                                    // A new Service Worker has finished installing but hasn't taken over yet.
+                                    console.log('SW: Update downloaded and ready. Signaling React App.');
+                                    // Set a flag in Local Storage for the React component to see and display the banner.
+                                    localStorage.setItem('swUpdatePending', 'true');
+                                    
+                                    // Optionally, force the new worker to take over immediately (less safe, but forces the update)
+                                    // newWorker.postMessage({ action: 'skipWaiting' }); 
+                                    
+                                    // Since we can't post a message back to the React component easily, 
+                                    // we rely on the React App detecting the 'swUpdatePending' flag on the next render.
+                                }
+                            });
+                        });
+                    })
+                    .catch(error => {
+                        console.error('SW registration failed:', error);
+                    });
+            } else {
+                console.log('Service Worker not supported in this browser.');
+            }
+        })();
+    </script>
+
 </body>
 </html>
