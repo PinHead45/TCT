@@ -43,8 +43,8 @@
         const { useState, useEffect, useCallback, useRef, useReducer } = React;
         
         // --- CONFIGURATION ---
-        // Version strictly set to 2.3.
-        const CURRENT_APP_VERSION = '2.3'; 
+        // Version strictly set to 2.4.
+        const CURRENT_APP_VERSION = '2.4'; 
         const LOCAL_STORAGE_VERSION_KEY = 'appVersion';
         const SERVICE_WORKER_UPDATE_KEY = 'swUpdatePending';
 
@@ -52,11 +52,12 @@
         /**
          * Component: ProgressBar
          */
-        const ProgressBar = ({ timeLeft, initialSeconds, primaryColor, isStarted }) => {
-            const percentage = (timeLeft / initialSeconds) * 100;
+        const ProgressBar = ({ timeElapsed, initialSeconds, primaryColor, isStarted }) => {
+            // Calculate percentage based on time elapsed
+            const percentage = (timeElapsed / initialSeconds) * 100;
             
-            // Check if we are in the last 15 seconds AND the timer is running
-            const isCritical = isStarted && percentage <= 15 && percentage > 0;
+            // Check if we are in the last 15 seconds (when timeElapsed is > initialSeconds - 15) AND the timer is running
+            const isCritical = isStarted && timeElapsed >= initialSeconds - 15;
             
             // Progress bar color logic: static primary color, pulsing when critical, gray when stopped
             const barColor = isCritical 
@@ -76,67 +77,65 @@
             );
         };
 
-        // --- Custom Hook: useTimer ---
+        // --- Custom Hook: useTimer (MODIFIED TO COUNT UP) ---
         const useTimer = (initialSeconds, playWarningFn, onCompletion, stopGlobalTimer) => {
-            const [timeLeft, setTimeLeft] = useState(initialSeconds);
+            // State now tracks time elapsed, starting at 0
+            const [timeElapsed, setTimeElapsed] = useState(0); 
             const [isStarted, setIsStarted] = useState(false);
-            const [soundPlayed, setSoundPlayed] = useState(false); // Tracks if the warning has played
+            const [soundPlayed, setSoundPlayed] = useState(false); 
             const intervalRef = useRef(null);
 
             const playWarningSound = useCallback(() => {
                 if (typeof Tone !== 'undefined' && Tone.context.state !== 'running') {
                     Tone.start();
                 }
-                playWarningFn(); // Execute the passed function (friendly or hostile sound)
+                playWarningFn(); 
                 setSoundPlayed(true);
             }, [playWarningFn]);
 
             const handleLoopReset = useCallback(() => {
-                setTimeLeft(initialSeconds); 
-                setSoundPlayed(false); // Reset sound flag for the next cycle
-                onCompletion(); // Notify parent of completion
-            }, [initialSeconds, onCompletion]);
+                setTimeElapsed(0); 
+                setSoundPlayed(false); 
+                onCompletion(); 
+            }, [onCompletion]);
 
             const triggerStartOrRestart = useCallback(() => {
                 if (!isStarted) {
                     setIsStarted(true);
-                } else {
-                    setTimeLeft(initialSeconds);
                 }
-                setSoundPlayed(false); // Ensure sound flag is reset on manual restart
-            }, [isStarted, initialSeconds]);
+                // Reset to 0 regardless of starting or restarting
+                setTimeElapsed(0); 
+                setSoundPlayed(false); 
+            }, [isStarted]);
 
             const stopTimer = useCallback(() => {
                 setIsStarted(false);
-                setTimeLeft(initialSeconds); // Reset time when stopping (clears the bar)
-                setSoundPlayed(false); // Ensure sound flag is reset on stop
-                stopGlobalTimer(); // Notify App to check lock status
-            }, [initialSeconds, stopGlobalTimer]);
+                setTimeElapsed(0); 
+                setSoundPlayed(false); 
+                stopGlobalTimer(); 
+            }, [stopGlobalTimer]);
 
             useEffect(() => {
                 if (isStarted) {
                     if (intervalRef.current) clearInterval(intervalRef.current);
                     
                     intervalRef.current = setInterval(() => {
-                        setTimeLeft(prevTime => {
-                            if (prevTime > 0) {
-                                const newTime = prevTime - 1;
-                                
-                                // 1. WARNING SOUND CHECK (5 seconds remaining)
-                                // Trigger warning sound only once when hitting 5s
-                                if (newTime === 5 && !soundPlayed) {
-                                    playWarningSound();
-                                }
-                                
-                                // 2. LOOP RESET CHECK (0 seconds remaining)
-                                if (newTime === 0) {
-                                     handleLoopReset(); 
-                                     return initialSeconds; // Reset immediately for the next loop display
-                                }
-
-                                return newTime;
+                        setTimeElapsed(prevTime => {
+                            const newTime = prevTime + 1;
+                            
+                            // 1. COMPLETION CHECK (Reached the initialSeconds duration)
+                            if (newTime > initialSeconds) {
+                                 handleLoopReset(); 
+                                 return 0; // Reset immediately for the next loop display
                             }
-                            return initialSeconds;
+
+                            // 2. WARNING SOUND CHECK (5 seconds *remaining* in the cycle)
+                            // This occurs when elapsed time hits initialSeconds - 5
+                            if (newTime === initialSeconds - 5 && !soundPlayed) {
+                                playWarningSound();
+                            }
+                            
+                            return newTime;
                         });
                     }, 1000);
                 } else {
@@ -148,7 +147,8 @@
                 return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
             }, [isStarted, initialSeconds, handleLoopReset, playWarningSound, soundPlayed]);
             
-            return { timeLeft, isStarted, triggerStartOrRestart, stopTimer, setIsStarted };
+            // Return timeElapsed instead of timeLeft
+            return { timeElapsed, isStarted, triggerStartOrRestart, stopTimer };
         };
 
 
@@ -160,11 +160,15 @@
                 // Timer automatically loops
             }, []);
 
-            const { timeLeft, isStarted, triggerStartOrRestart, stopTimer } = useTimer(initialSeconds, playWarningFn, handleCompletion, stopLock);
+            // Use timeElapsed instead of timeLeft
+            const { timeElapsed, isStarted, triggerStartOrRestart, stopTimer } = useTimer(initialSeconds, playWarningFn, handleCompletion, stopLock);
             
+            // Remaining time calculation
+            const timeLeft = initialSeconds - timeElapsed;
+
             // Expose the stop function to the parent component via the ref
             React.useImperativeHandle(ref, () => ({
-                stop: stopTimer, // Renamed to 'stop' for simplicity in App component
+                stop: stopTimer, 
                 isStarted: isStarted,
             }));
 
@@ -173,20 +177,22 @@
                 activateLock(timerId); // Request wake lock
             };
 
-            // MODIFIED: Button text is now "REINITIATE DEPLOYMENT CYCLE" when running
             const buttonText = isStarted ? 'REINITIATE DEPLOYMENT CYCLE' : 'INITIATE DEPLOYMENT CYCLE';
             
             const buttonColor = colorClass.replace('bg-', 'bg-');
             const borderColor = colorClass.replace('bg-', 'border-');
 
-            let statusText = isStarted ? `ACTIVE COOLDOWN / ${timeLeft}s REMAINING` : 'STATUS: STANDBY';
+            // Status text now shows elapsed time and calculated time remaining
+            let statusText = isStarted 
+                ? `ACTIVE CYCLE: ${timeElapsed}s ELAPSED / ${timeLeft}s REMAINING` 
+                : 'STATUS: STANDBY';
             let statusColor = 'text-gray-500';
             
-            if (isStarted && timeLeft <= 15) { // Critical zone trigger
-                statusText = 'CRITICAL ZONE: LANDING IMMINENT';
+            if (isStarted && timeLeft <= 15) { // Critical zone trigger (using timeLeft)
+                statusText = `CRITICAL ZONE: LANDING IMMINENT (${timeLeft}s)`;
                 statusColor = colorClass.replace('bg-', 'text-');
                 if (colorClass === 'bg-red-500') statusColor = 'text-red-500 animate-pulse';
-            } else if (isStarted && timeLeft === initialSeconds) {
+            } else if (isStarted && timeElapsed === 0) {
                 statusText = 'REDEPLOYING ASSET...';
                 statusColor = 'text-white animate-pulse';
             } else if (isStarted) {
@@ -204,7 +210,7 @@
 
                         <div className="mt-auto mb-6 w-full"> 
                             <ProgressBar 
-                                timeLeft={timeLeft} 
+                                timeElapsed={timeElapsed} 
                                 initialSeconds={initialSeconds} 
                                 primaryColor={colorClass} 
                                 isStarted={isStarted}
@@ -477,8 +483,8 @@
         (function() {
             // Self-registering Service Worker (minimal code to handle caching)
             const SW_FILENAME = 'sw.js'; 
-            // VERSION REMAINS 2.3
-            const CACHE_NAME = 'tactical-tracker-v2.3'; 
+            // VERSION UPDATED TO 2.4
+            const CACHE_NAME = 'tactical-tracker-v2.4'; 
             const urlsToCache = [
                     '/', 
                 ];
@@ -609,3 +615,4 @@
 
 </body>
 </html>
+
